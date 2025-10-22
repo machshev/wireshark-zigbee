@@ -3,137 +3,178 @@
 # SPDX-License-Identifier: Apache-2.0
 """Zigbee wireshark extcap."""
 
+import argparse
+import asyncio
+import glob
+import json
+import os
 import struct
+import sys
 import time
-from json import JSONDecodeError, loads
-from pathlib import Path
 
-import click
-import serial
+import serial_asyncio
+from scapy.config import conf
+from scapy.packet import Raw
+from scapy.utils import PcapNgWriter
 
-version = "0.1.0"
-url = "https://github.com/machshev/wireshark-zigbee"
+# Extcap version
+EXTCAP_VERSION = "1.0"
 
-
-def print_interfaces(
-    extcap_version: str = "",
-) -> None:
-    """Print the available interfaces."""
-    print(f"extcap {{{version}}}{{help={url}}}")
-
-    for d in Path("/dev").glob("ttyUSB*"):
-        print(f"interface {{value={d}}}{{display={d.name}}}")
+# PCAPNG constants
+LINKTYPE_IEEE802_15_4 = 230
 
 
-def print_dlts(
-    extcap_interface: str = "",
-) -> None:
-    """Print the available Diagnostic Log and Trace (DLT) for the interface."""
+def extcap_interfaces():
+    ports = []
+    for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
+        ports.extend(glob.glob(pattern))
+
+    for port in sorted(ports):
+        if os.access(port, os.R_OK | os.W_OK):
+            display = f"Sonoff 802.15.4 Sniffer - {port}"
+            iface = {
+                "value": port,
+                "display": display,
+                "help": "Sonoff Zigbee USB Dongle Plus-E Sniffer",
+            }
+
+            print(
+                "interface {{value={}}}{{display={}}}{{help={}}}".format(
+                    iface["value"],
+                    iface["display"],
+                    iface["help"],
+                )
+            )
 
 
-def print_config(
-    extcap_interface: str = "",
-) -> None:
-    """Print the available interfaces."""
+def extcap_config(interface: str) -> None:
+    """Print config."""
+    print(
+        "arg {number=11}{call=--channel}{display=Channel}{tooltip=Zigbee channel}"
+        "{type=unsigned}{range=11,26}{default=11}"
+    )
 
 
-def pcap_header() -> bytearray:
-    """Generate header."""
-    header = bytearray()
-    header.extend(struct.pack("<L", int("a1b2c3d4", 16)))
-    header.extend(struct.pack("<H", 2))  # Pcap Major Version
-    header.extend(struct.pack("<H", 4))  # Pcap Minor Version
-    header.extend(struct.pack("<I", 0))  # Timezone
-    header.extend(struct.pack("<I", 0))  # Accurancy of timestamps
-    header.extend(struct.pack("<L", int("0000ffff", 16)))  # Max Length of capture frame
-    header.extend(struct.pack("<L", 1))  # Ethernet
-    return header
+def extcap_dlts(interface: str):
+    print(
+        "dlt {number=%d}{name=IEEE802_15_4}{display=IEEE 802.15.4}"
+        % LINKTYPE_IEEE802_15_4
+    )
 
 
-def pcap_package(message) -> bytearray:
-    pcap = bytearray()
-    # length = 14 bytes [ eth ] + 20 bytes [ ip ] + messagelength
+class SnifferCapture:
+    def __init__(self, fifo_path, port, channel):
+        self.fifo_path = fifo_path
+        self.port = port
+        self.channel = int(channel)
+        self.running = False
+        self.packet_queue = asyncio.Queue()
 
-    caplength = len(message) + 14 + 20
-    timestamp = int(time.time())
+        conf.l2types.register_layer2num(LINKTYPE_IEEE802_15_4, Raw)
 
-    pcap.extend(struct.pack("<L", timestamp))
-    pcap.extend(struct.pack("<L", 0x00))  # timestamp nanoseconds
-    pcap.extend(struct.pack("<L", caplength))  # length captured
-    pcap.extend(struct.pack("<L", caplength))  # length in frame
+    async def start(self):
+        try:
+            ser_reader, ser_writer = await serial_asyncio.open_serial_connection(
+                url=self.port, baudrate=1000000
+            )
 
-    # ETH
-    pcap.extend(struct.pack("h", 0))  # source mac
-    pcap.extend(struct.pack("h", 0))  # source mac
-    pcap.extend(struct.pack("h", 0))  # source mac
-    pcap.extend(struct.pack("h", 0))  # dest mac
-    pcap.extend(struct.pack("h", 0))  # dest mac
-    pcap.extend(struct.pack("h", 0))  # dest mac
-    pcap.extend(struct.pack("<h", 8))  # protocol (ip)
+            pcap_writer = PcapNgWriter(self.fifo_path)
 
-    # IP
-    pcap.extend(struct.pack("b", int("45", 16)))  # IP version
-    pcap.extend(struct.pack("b", int("0", 16)))
-    pcap.extend(struct.pack(">H", len(message) + 20))  # length of data + payload
-    pcap.extend(struct.pack("<H", int("0", 16)))  # Identification
-    pcap.extend(struct.pack("b", int("40", 16)))  # Don't fragment
-    pcap.extend(struct.pack("b", int("0", 16)))  # Fragment Offset
-    pcap.extend(struct.pack("b", int("40", 16)))
-    pcap.extend(struct.pack("B", 0xFE))  # Protocol (2 = unspecified)
-    pcap.extend(struct.pack("<H", int("0000", 16)))  # Checksum
-    pcap.extend(struct.pack(">L", int("7F000001", 16)))  # Source IP
-    pcap.extend(struct.pack(">L", int("7F000001", 16)))  # Dest IP
+            self.running = True
+            await asyncio.gather(
+                self._reader(reader=ser_reader),
+                self._writer(writer=pcap_writer),
+            )
 
-    pcap.extend(message)
-    return pcap
+            while self.running:
+                time.sleep(0.1)
 
+        finally:
+            self.running = False
+            if pcap_writer:
+                pcap_writer.close()
 
-def capture(extcap_interface: str, fifo: str) -> None:
-    """Capture packets from sniffer."""
-    with (
-        Path(fifo).open(mode="w+b") as f,
-        serial.Serial(extcap_interface, 1000000, timeout=1) as ser,
-    ):
-        f.write(pcap_header())
-
-        while True:
+    async def _reader(self, reader):
+        while self.running:
             try:
-                data = loads(ser.readline())
-            except JSONDecodeError:
-                continue
+                line = await reader.readline()
+                line = line.decode("utf-8", errors="ignore").rstrip()
+                if not line:
+                    continue
 
-            f.write(pcap_package(data["S"]))
-            print(data)
+                data = json.loads(line)
+                if "S" not in data:
+                    continue
+
+                hex_str = data["S"].replace(" ", "").replace(":", "")
+                packet = bytes.fromhex(hex_str)
+                rssi = data.get("R", 0)
+                lqi = data.get("Q", 0)
+                ts = time.time()
+                sec = int(ts)
+                usec = int((ts - sec) * 1000000)
+
+                await self.packet_queue.put((sec, usec, packet, rssi, lqi))
+
+            except json.JSONDecodeError as e:
+                print(f"DEBUG: JSON parse error: {e}", file=sys.stderr)
+
+            await asyncio.sleep(0)  # Yield control
+
+    async def _writer(self, writer: PcapNgWriter):
+        """Write packets to fifo for wireshark."""
+        while self.running or not self.packet_queue.empty():
+            try:
+                sec, usec, packet, rssi, lqi = await asyncio.wait_for(
+                    self.packet_queue.get(), timeout=1.0
+                )
+
+                raw_packet = Raw(packet)
+                raw_packet.comments = [
+                    struct.pack("<b", rssi),  # RSSI: int8
+                    struct.pack("<B", lqi),  # LQI: uint8
+                ]
+
+                writer.write(raw_packet)
+                writer.flush()
+
+                self.packet_queue.task_done()
+
+            except TimeoutError:
+                pass
+
+            await asyncio.sleep(0)  # Yield control
 
 
-@click.command()
-@click.option("--extcap-interfaces", is_flag=True)
-@click.option("--extcap-dlts", is_flag=True)
-@click.option("--extcap-config", is_flag=True)
-@click.option("--capture", is_flag=True)
-@click.option("--extcap-version", default="")
-@click.option("--extcap-interface", default="")
-@click.option("--extcap-capture-filter", default="")
-@click.option("--fifo", default="")
-def main(
-    extcap_interfaces: bool = False,
-    extcap_dlts: bool = False,
-    extcap_config: bool = False,
-    capture: bool = False,
-    extcap_version: str = "",
-    extcap_interface: str = "",
-    extcap_capture_filter: str = "",
-    fifo: str = "",
-) -> None:
-    """Zigbee wireshark extcap."""
-    if extcap_interfaces:
-        print_interfaces(extcap_version=extcap_version)
+def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--extcap-version")
+    parser.add_argument("--extcap-interfaces", action="store_true")
+    parser.add_argument("--extcap-config", action="store_true")
+    parser.add_argument("--extcap-dlts", action="store_true")
+    parser.add_argument("--extcap-interface")
+    parser.add_argument("--capture", action="store_true")
+    parser.add_argument("--fifo")
+    parser.add_argument("--channel", type=int, default=11)
+    args = parser.parse_args()
 
-    if extcap_dlts:
-        print_dlts(extcap_interface=extcap_interface)
+    print("extcap {version=%s}" % EXTCAP_VERSION)
 
-    if extcap_config:
-        print_config(extcap_interface=extcap_interface)
+    if args.extcap_interfaces:
+        extcap_interfaces()
+    if args.extcap_config and args.extcap_interface:
+        extcap_config(args.extcap_interface)
+    if args.extcap_dlts and args.extcap_interface:
+        extcap_dlts(args.extcap_interface)
 
-    if capture:
-        capture(extcap_interface=extcap_interface, fifo=fifo)
+    if args.capture:
+        if args.fifo and args.extcap_interface:
+            sniffer = SnifferCapture(args.fifo, args.extcap_interface, args.channel)
+            asyncio.run(sniffer.start())
+        else:
+            print("Error: Missing --fifo or --extcap-interface", file=sys.stderr)
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
