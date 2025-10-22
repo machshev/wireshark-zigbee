@@ -80,6 +80,7 @@ ignore = [
     "TRY003", # Custom exception with vanilla args. This is reasonable if the
               # exception is used as a sentinel.
     "EM101",  # String literals in exception
+    "T201",   # Use lots of print statements
 ]
 
 [tool.ruff.lint.per-file-ignores]
