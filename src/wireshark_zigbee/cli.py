@@ -5,17 +5,19 @@
 
 import argparse
 import asyncio
-import glob
 import json
 import os
 import struct
 import sys
-import time
+from asyncio import StreamReader
+from pathlib import Path
 
 import serial_asyncio
 from scapy.config import conf
 from scapy.packet import Raw
 from scapy.utils import PcapNgWriter
+
+URL = "https://github.com/machshev/wireshark-zigbee"
 
 # Extcap version
 EXTCAP_VERSION = "1.0"
@@ -24,10 +26,11 @@ EXTCAP_VERSION = "1.0"
 LINKTYPE_IEEE802_15_4 = 230
 
 
-def extcap_interfaces():
+def extcap_interfaces() -> None:
+    """Print available interfaces."""
     ports = []
-    for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
-        ports.extend(glob.glob(pattern))
+    for pattern in ["ttyUSB*", "ttyACM*"]:
+        ports.extend(Path("/dev").glob(pattern))
 
     for port in sorted(ports):
         if os.access(port, os.R_OK | os.W_OK):
@@ -35,7 +38,7 @@ def extcap_interfaces():
             iface = {
                 "value": port,
                 "display": display,
-                "help": "Sonoff Zigbee USB Dongle Plus-E Sniffer",
+                "help": URL,
             }
 
             print(
@@ -55,7 +58,7 @@ def extcap_config(interface: str) -> None:
     )
 
 
-def extcap_dlts(interface: str):
+def extcap_dlts(interface: str) -> None:
     print(
         "dlt {number=%d}{name=IEEE802_15_4}{display=IEEE 802.15.4}"
         % LINKTYPE_IEEE802_15_4
@@ -73,28 +76,27 @@ class SnifferCapture:
         conf.l2types.register_layer2num(LINKTYPE_IEEE802_15_4, Raw)
 
     async def start(self):
+        ser_reader, _ = await serial_asyncio.open_serial_connection(
+            url=self.port, baudrate=1000000
+        )
+
+        pcap_writer = PcapNgWriter(self.fifo_path)
+
         try:
-            ser_reader, ser_writer = await serial_asyncio.open_serial_connection(
-                url=self.port, baudrate=1000000
-            )
-
-            pcap_writer = PcapNgWriter(self.fifo_path)
-
-            self.running = True
             await asyncio.gather(
                 self._reader(reader=ser_reader),
                 self._writer(writer=pcap_writer),
             )
 
-            while self.running:
-                time.sleep(0.1)
+            while True:
+                await asyncio.sleep(0.1)  # Yield control
 
         finally:
             self.running = False
             if pcap_writer:
                 pcap_writer.close()
 
-    async def _reader(self, reader):
+    async def _reader(self, reader: StreamReader):
         while self.running:
             try:
                 line = await reader.readline()
@@ -106,15 +108,16 @@ class SnifferCapture:
                 if "S" not in data:
                     continue
 
-                hex_str = data["S"].replace(" ", "").replace(":", "")
-                packet = bytes.fromhex(hex_str)
-                rssi = data.get("R", 0)
-                lqi = data.get("Q", 0)
-                ts = time.time()
-                sec = int(ts)
-                usec = int((ts - sec) * 1000000)
-
-                await self.packet_queue.put((sec, usec, packet, rssi, lqi))
+                await self.packet_queue.put(
+                    (
+                        # packet
+                        bytes.fromhex(data["S"].replace(" ", "").replace(":", "")),
+                        data.get("L", 0),  # L?
+                        data.get("R", 0),  # RSSI
+                        data.get("Q", 0),  # LQI
+                        data.get("C", 0),  # Channel
+                    )
+                )
 
             except json.JSONDecodeError as e:
                 print(f"DEBUG: JSON parse error: {e}", file=sys.stderr)
@@ -123,16 +126,19 @@ class SnifferCapture:
 
     async def _writer(self, writer: PcapNgWriter):
         """Write packets to fifo for wireshark."""
-        while self.running or not self.packet_queue.empty():
+        while True:
             try:
-                sec, usec, packet, rssi, lqi = await asyncio.wait_for(
-                    self.packet_queue.get(), timeout=1.0
+                packet, L, rssi, lqi, channel = await asyncio.wait_for(
+                    self.packet_queue.get(),
+                    timeout=1.0,
                 )
 
                 raw_packet = Raw(packet)
                 raw_packet.comments = [
+                    struct.pack("<B", L),  # RSSI: int8
                     struct.pack("<b", rssi),  # RSSI: int8
                     struct.pack("<B", lqi),  # LQI: uint8
+                    struct.pack("<B", channel),  # LQI: uint8
                 ]
 
                 writer.write(raw_packet)
@@ -158,7 +164,7 @@ def main():
     parser.add_argument("--channel", type=int, default=11)
     args = parser.parse_args()
 
-    print("extcap {version=%s}" % EXTCAP_VERSION)
+    print(f"extcap {{version={EXTCAP_VERSION}}}{{help={URL}}}")
 
     if args.extcap_interfaces:
         extcap_interfaces()
