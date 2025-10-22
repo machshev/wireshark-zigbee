@@ -308,6 +308,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pyserial-asyncio"
+version = "0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyserial" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/9a/8477699dcbc1882ea51dcff4d3c25aa3f2063ed8f7d7a849fd8f610506b6/pyserial-asyncio-0.6.tar.gz", hash = "sha256:b6032923e05e9d75ec17a5af9a98429c46d2839adfaf80604d52e0faacd7a32f", size = 31322, upload-time = "2021-09-30T22:29:02.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/24/c820cf15f87f7b164e83710c1852d4f900d9793961579e5ef64189bc0c10/pyserial_asyncio-0.6-py3-none-any.whl", hash = "sha256:de9337922619421b62b9b1a84048634b3ac520e1d690a674ed246a2af7ce1fc5", size = 7594, upload-time = "2021-09-30T22:29:00.12Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -364,6 +376,15 @@ wheels = [
 ]
 
 [[package]]
+name = "scapy"
+version = "2.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/2f/035d3888f26d999e9680af8c7ddb7ce4ea0fd8d0e01c000de634c22dcf13/scapy-2.6.1.tar.gz", hash = "sha256:7600d7e2383c853e5c3a6e05d37e17643beebf2b3e10d7914dffcc3bc3c6e6c5", size = 2247754, upload-time = "2024-11-05T08:43:23.488Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/34/8695b43af99d0c796e4b7933a0d7df8925f43a8abdd0ff0f6297beb4de3a/scapy-2.6.1-py3-none-any.whl", hash = "sha256:88a998572049b511a1f3e44f4aa7c62dd39c6ea2aa1bb58434f503956641789d", size = 2420670, upload-time = "2024-11-05T08:43:21.285Z" },
+]
+
+[[package]]
 name = "stack-data"
 version = "0.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -412,6 +433,8 @@ dependencies = [
     { name = "click" },
     { name = "logzero" },
     { name = "pyserial" },
+    { name = "pyserial-asyncio" },
+    { name = "scapy" },
 ]
 
 [package.optional-dependencies]
@@ -460,9 +483,11 @@ requires-dist = [
     { name = "pyhamcrest", marker = "extra == 'test'", specifier = ">=2.1.0" },
     { name = "pyright", marker = "extra == 'typing'", specifier = ">=1.1.381" },
     { name = "pyserial", specifier = ">=3.5" },
+    { name = "pyserial-asyncio", specifier = ">=0.6" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.3" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'linting'", specifier = ">=0.6.7" },
+    { name = "scapy", specifier = ">=2.6.1" },
     { name = "wireshark-zigbee", extras = ["linting", "typing", "test"], marker = "extra == 'ci'" },
     { name = "wireshark-zigbee", extras = ["linting", "typing", "test", "debug"], marker = "extra == 'dev'" },
     { name = "wireshark-zigbee", extras = ["typing", "test", "debug"], marker = "extra == 'nix'" },

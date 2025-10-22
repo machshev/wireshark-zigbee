@@ -10,6 +10,8 @@ dependencies = [
     "click>=8.1.7",
     "logzero>=1.7.0",
     "pyserial>=3.5",
+    "pyserial-asyncio>=0.6",
+    "scapy>=2.6.1",
 ]
 
 [project.optional-dependencies]
