@@ -9,22 +9,53 @@
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixos-unstable";
 
     flake-utils.url = "github:numtide/flake-utils";
+
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay/stable";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
     nixpkgs,
     nixpkgs-unstable,
     flake-utils,
+    rust-overlay,
     ...
   }:
     flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      overlays = [(import rust-overlay)];
+      pkgs = import nixpkgs {
+        inherit system overlays;
+      };
       pkgs-unstable = nixpkgs-unstable.legacyPackages.${system};
     in {
       devShells = {
         default = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            (rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
+            cargo-nextest
+            cargo-udeps
+            cargo-vet
+            cargo-about
+            cargo-release
+
+            rust-analyzer
+            rustfmt
+
+            adrs
+            typos
+
+            # If the dependencies need system libs, you usually need pkg-conf
+            pkg-config
+            openssl
+
+            # Python dependencies for sonoff_zigbee_extcap.py
+            python313
+            python313Packages.pyserial-asyncio
+            python313Packages.scapy
+          ];
           packages = [
-            pkgs.python314
             pkgs.just
             pkgs.reuse
             pkgs-unstable.ruff
