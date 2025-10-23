@@ -33,7 +33,7 @@
       devShells = {
         default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            (rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
+            rust-bin.stable.latest.default
             cargo-nextest
             cargo-udeps
             cargo-vet
@@ -49,6 +49,7 @@
             # If the dependencies need system libs, you usually need pkg-conf
             pkg-config
             openssl
+            udev
 
             # Python dependencies for sonoff_zigbee_extcap.py
             python313
