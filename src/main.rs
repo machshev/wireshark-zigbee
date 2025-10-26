@@ -284,7 +284,7 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let port = tokio_serial::new(capture_step.interface, 1_000_000)
-                .timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(99999))
                 .open()
                 .expect("Failed to open port");
 
